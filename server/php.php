@@ -96,14 +96,16 @@ abstract class qqUploadedFile{
 		if(is_file($path)){
 			$pathinfo = pathinfo($path);
 			
-			$ext = $pathinfo['extension'];
-			$name = isset($pathinfo['filename']) ? $pathinfo['filename'] : substr($pathinfo['basename'], 0, -(strlen($ext)));
+			// Don't add a '.' to the end of files with no extension
+			$ext = isset($pathinfo['extension']) && $pathinfo['extension'] !== '' ? ('.'.$pathinfo['extension']) : '';
+			$name = isset($pathinfo['filename']) ? $pathinfo['filename'] :
+				(strlen($ext) ? substr($pathinfo['basename'], 0, -(strlen($ext))) : $pathinfo['basename']);
 			$folder = $pathinfo['dirname'];
 			
 			$counter = 1;
 			
 			do{
-				$path = $folder.'/'.$name.'_'.($counter++).'.'.$ext;
+				$path = $folder.'/'.$name.'_'.($counter++).$ext;
 			} while(is_file($path));
 		}
 		
