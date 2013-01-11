@@ -1,28 +1,129 @@
 <?php
 /**
- * How to use this PHP file:
- * Uncomment the following lines
- * OR: move these lines into a new file, and add require_once('file-uploader/server/php.php');
- * Enjoy :)
- 
-// list of valid extensions, ex. array("jpeg", "xml", "bmp")
-$allowedExtensions = array();
-// max file size in bytes
-$sizeLimit = 10 * 1024 * 1024;
+ * FineUploader PHP server-side script
+ *
+ * Just set the options, point the JavaScript at this file,
+ * and watch the magic :-)
+ *
+ * For PHP 5.4's session progress, use:
+ * ?action=progress, ?action=element, or ?action=cancel
+ */
 
-$uploader = qqFileUploader::getUploader($allowedExtensions, $sizeLimit);
-echo $uploader->handleUpload('uploads/');
+// That's it.  One line!  It's all magic! :-D
+echo json_encode(qqFileUploader::getInstance()->go());
 
-*/
 
 /**
  * Factory for creating the uploader class
  */
 class qqFileUploader{
-	public static function getUploader($types=array(), $maxSize=FALSE){
+	// list of valid extensions, ex. array("jpeg", "xml", "bmp")
+	private $allowedExtensions = array();
+	// max file size in bytes
+	private $sizeLimit = 10485760; //10 * 1024 * 1024
+	// path to store uploaded files in
+	private $uploadPath = 'upload/files/';
+	// session name to use, NULL for defualt
+	private $sessionName = NULL;
+
+	// Singletons are cool :)
+	private static $instance;
+
+	private function __construct(){
+		// Absolute paths FTW
+		$this->uploadPath = $_SERVER['DOCUMENT_ROOT'].$this->uploadPath;
+	}
+
+	public static function getInstance(){
+		if(is_null(self::$instance)){
+			self::$instance = new self();
+		}
+		return self::$instance;
+	}
+
+	private function getUploader(){
 		$uploader = strpos(strtolower($_SERVER['CONTENT_TYPE']), 'multipart/') === 0
 			? 'qqUploadedFileForm' : 'qqUploadedFileXhr';
-		return new $uploader($types, $maxSize);
+		return new $uploader($this->allowedExtensions, $this->sizeLimit);
+	}
+
+	/**
+	 * Return session upload progress
+	 */
+	private function sessionProgress(){
+		$upload_progress = ini_get('session.upload_progress.enabled');
+		$ret = array();
+
+		if(!!$upload_progress){
+			$key = ini_get('session.upload_progress.prefix') . 'qqUploader';
+			$ret = $_SESSION[$key];
+		}
+
+		return $ret;
+	}
+
+	/**
+	 * Cancel an upload via session
+	 */
+	private function sessionProgressCancel(){
+		$upload_progress = ini_get('session.upload_progress.enabled');
+		$ret = array();
+
+		if(!!$upload_progress){
+			$key = ini_get('session.upload_progress.prefix') . 'qqUploader';
+			$_SESSION[$key]['cancel_upload'] = TRUE;
+			$ret = array('success'=>true);
+		}
+		else{
+			$ret = array('success'=>false);
+		}
+
+		return $ret;
+	}
+
+	/**
+	 * Get data needed for session upload progress
+	 */
+	private function sessionProgressElement(){
+		$upload_progress = ini_get('session.upload_progress.enabled');
+		$ret = array();
+
+		if(!!$upload_progress){
+			$ret['upload_name'] = ini_get('session.upload_progress.name');
+			$ret['upload_value'] = 'qqUploader';
+			$ret['upload_freq'] = ini_get('session.upload_progress.min_freq');
+		}
+
+		return $ret;
+	}
+
+
+	/**
+	 * Here we go!  This function figures out what to do and then does it.
+	 */
+	public function go(){
+		if(is_null($this->sessionName)){
+			session_name($this->sessionName);
+		}
+		session_start();
+		$ret = NULL;
+		// $_GET['action'] ?: ''
+		switch($_GET['action'] ? $_GET['action'] : ''){
+			case 'progress':
+				$ret = $this->sessionProgress();
+				break;
+			case 'element':
+				$ret = $this->sessionProgressElement();
+				break;
+			case 'cancel':
+				$ret = $this->sessionProgressCancel();
+				break;
+			default:
+				$up = $this->getUploader();
+				$ret = $up->handleUpload($this->uploadPath);
+				break;
+		}
+		return $ret;
 	}
 }
 
@@ -64,7 +165,7 @@ abstract class qqUploadedFile{
 		if(substr($path, -1) !== '/'){
 			$path .= '/';
 		}
-		
+
 		// Checks to make sure we can upload the file, and it's allowed
 		if(!is_writable($path)){
 			return $this->error("Server error. Upload directory isn't writable.");
@@ -95,23 +196,23 @@ abstract class qqUploadedFile{
 	final protected function renameUpload($path){
 		if(is_file($path)){
 			$pathinfo = pathinfo($path);
-			
+
 			// Don't add a '.' to the end of files with no extension
 			$ext = isset($pathinfo['extension']) && $pathinfo['extension'] !== '' ? ('.'.$pathinfo['extension']) : '';
 			$name = isset($pathinfo['filename']) ? $pathinfo['filename'] :
 				(strlen($ext) ? substr($pathinfo['basename'], 0, -(strlen($ext))) : $pathinfo['basename']);
 			$folder = $pathinfo['dirname'];
-			
+
 			$counter = 1;
-			
+
 			do{
 				$path = $folder.'/'.$name.'_'.($counter++).$ext;
 			} while(is_file($path));
 		}
-		
+
 		return $path;
 	}
-	
+
 	/**
 	 * The name the file was uploaded as (after being renamed)
 	 */
@@ -142,22 +243,22 @@ abstract class qqUploadedFile{
 	 * Helper methods to return JSON
 	 */
 	final protected function success(){
-		return $this->_retJSON();
+		return $this->_retArray();
 	}
 	final protected function error($msg){
-		return $this->_retJSON($msg, TRUE);
+		return $this->_retArray($msg, TRUE);
 	}
-	final protected function _retJSON($msg=TRUE, $error=FALSE){
-		return (json_encode(array(
+	final protected function _retArray($msg=TRUE, $error=FALSE){
+		return array(
 			$error ? 'error' : 'success' => $msg
-		)));
+		);
 	}
 }
 
 /**
  * If your browser supports XMLHttpRequest 2 :-D
  */
-class qqUploadedFileXhr extends qqUploadedFile{	
+class qqUploadedFileXhr extends qqUploadedFile{
 	function save($path, $replace=FALSE){
 		$input = fopen("php://input", 'r'); // Stream the file from the POST body
 		$ram = fopen("php://temp/maxmemory:5242880", 'w+'); // 5Mb max, then use temp file
